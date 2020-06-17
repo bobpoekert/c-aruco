@@ -27,11 +27,21 @@ typedef struct CV_Image {
 
 typedef struct CV_Contours {
 
+    /* the start of the first element is always zero,
+     * so element zero of contour_starts is the start of the second element
+     * (index 1).
+     *
+     * the last element of contour_starts is always where a new contour would start.
+     *
+     * a Contours with only one contour has contour_starts[0] equal to that contour's length
+     */
+
     size_t *contour_starts;
     size_t n_contours;
     size_t *xs;
     size_t *ys;
     size_t max_n_contours;
+    size_t array_length;
 
 } CV_Contours;
 
