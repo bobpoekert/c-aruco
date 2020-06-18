@@ -1,22 +1,24 @@
 from libc.stdint cimport *
 import numpy as np
 cimport numpy as np
-
+from ctypes import c_size_t
 
 cdef extern from "cv.h":
 
-    typedef struct CV_Image:
+    ctypedef struct CV_Image:
         size_t width
         size_t height
         uint8_t *data
 
-    typedef struct CV_Contours:
+    ctypedef struct CV_Contours:
         size_t *contour_starts
         size_t n_contours
         size_t *xs
         size_t *ys
         size_t max_n_contours
         size_t array_length
+
+    ctypedef size_t CV_PerspectiveTransform[8];
 
     void CV_get_perspective_transform(CV_Contours *c, size_t contour_idx, size_t warp_size, CV_PerspectiveTransform res)
 
@@ -42,15 +44,16 @@ cdef extern from "cv.h":
             size_t w, size_t h)
     void CV_binary_border(CV_Image image_src, CV_Image *image_dst)
 
-cdef image_from_array(np.ndarray[np.uint32_t, ndim=2, mode='c'] inp, CV_Image *outp):
+cdef image_from_array(inp, CV_Image *outp):
+    cdef np.ndarray[np.uint8_t, ndim=2, mode='c'] cinp = inp
     w, h = inp.shape
-    outp->width = w
-    outp->height = h
-    outp->data = &inp[0,0]
+    outp.width = w
+    outp.height = h
+    outp.data = &cinp[0,0]
 
-def gaussian_blur(np.ndarray[np.uint32_t, ndim=2, mode='c'] inp, kernel_size):
-    cdef np.ndarray[np.uint32_t, ndim=2, mode='c'] res = np.zeros_like(inp)
-    cdef np.ndarray[np.uint32_t, ndim=2, mode='c'] mean = np.zeros_like(inp)
+def gaussian_blur(np.ndarray[np.uint8_t, ndim=2, mode='c'] inp, kernel_size):
+    cdef np.ndarray[np.uint8_t, ndim=2, mode='c'] res = np.zeros_like(inp)
+    cdef np.ndarray[np.uint8_t, ndim=2, mode='c'] mean = np.zeros_like(inp)
 
     cdef CV_Image inp_image
     cdef CV_Image res_image
@@ -60,12 +63,12 @@ def gaussian_blur(np.ndarray[np.uint32_t, ndim=2, mode='c'] inp, kernel_size):
     image_from_array(res, &res_image)
     image_from_array(mean, &mean_image)
 
-    CV_guassian_blur(inp_image, res_image, mean_image, kernel_size)
+    CV_gaussian_blur(inp_image, res_image, mean_image, kernel_size)
 
     return (res, mean)
 
-def stack_box_blur(np.ndarray[np.uint32_t, ndim=2, mode='c'] inp, kernel_size):
-    cdef np.ndarray[np.uint32_t, ndim=2, mode='c'] res = np.zeros_like(inp)
+def stack_box_blur(np.ndarray[np.uint8_t, ndim=2, mode='c'] inp, kernel_size):
+    cdef np.ndarray[np.uint8_t, ndim=2, mode='c'] res = np.zeros_like(inp)
 
     cdef CV_Image inp_image
     cdef CV_Image res_image
@@ -73,11 +76,11 @@ def stack_box_blur(np.ndarray[np.uint32_t, ndim=2, mode='c'] inp, kernel_size):
     image_from_array(inp, &inp_image)
     image_from_array(res, &res_image)
 
-    CV_stack_box_blur(inp_image, res_image)
+    CV_stack_box_blur(inp_image, res_image, kernel_size)
 
     return res
 
-def threshold_inplace(np.ndarray[np.uint32_t, ndim=2, mode='c'] inp, thresh):
+def threshold_inplace(np.ndarray[np.uint8_t, ndim=2, mode='c'] inp, thresh):
 
     cdef CV_Image inp_image
     image_from_array(inp, &inp_image)
@@ -89,8 +92,8 @@ def threshold(inp, thresh):
     threshold_inplace(res, thresh)
     return res
 
-def adaptive_threshold(np.ndarray[np.uint32_t, ndim=2, mode='c'] inp, kernel_size, thresh):
-    cdef np.ndarray[np.uint32_t, ndim=2, mode='c'] res = np.zeros_like(inp)
+def adaptive_threshold(np.ndarray[np.uint8_t, ndim=2, mode='c'] inp, kernel_size, thresh):
+    cdef np.ndarray[np.uint8_t, ndim=2, mode='c'] res = np.zeros_like(inp)
 
     cdef CV_Image inp_image
     cdef CV_Image res_image
@@ -102,7 +105,7 @@ def adaptive_threshold(np.ndarray[np.uint32_t, ndim=2, mode='c'] inp, kernel_siz
 
     return res
 
-def otsu_inplace(np.ndarray[np.uint32_t, ndim=2, mode='c'] inp):
+def otsu_inplace(np.ndarray[np.uint8_t, ndim=2, mode='c'] inp):
 
     cdef CV_Image inp_image
     image_from_array(inp, &inp_image)
@@ -114,37 +117,46 @@ def otsu(inp):
     otsu_inplace(res)
     return res
 
+cdef slice_image(CV_Image img, arr):
+    return arr[:img.width, :img.height]
 
-def _find_contours(np.ndarray[np.uint32_t, ndim=2, mode='c'] inp):
+def _find_contours(np.ndarray[np.uint8_t, ndim=2, mode='c'] inp):
     cdef CV_Image inp_image
     image_from_array(inp, &inp_image)
 
     max_size = inp.shape[0] * inp.shape[1]
 
-    cdef np.ndarray[np.size_t, ndim=1, mode='c'] xs = np.zeros((max_size,), dtype=np.uint64)
-    cdef np.ndarray[np.size_t, ndim=1, mode='c'] ys = np.zeros_like(xs)
-    cdef np.ndarray[np.size_t, ndim=1, mode='c'] offsets = np.zeros_like(xs)
+    cdef np.ndarray[np.uint_t, ndim=1, mode='c'] xs = np.zeros((max_size,), dtype=c_size_t)
+    cdef np.ndarray[np.uint_t, ndim=1, mode='c'] ys = np.zeros_like(xs)
+    cdef np.ndarray[np.uint_t, ndim=1, mode='c'] offsets = np.zeros_like(xs)
 
-    CV_Contours res
-    res.contour_starts = &offsets[0]
-    res.xs = &xs[0]
-    res.ys = &ys[0]
+    cdef CV_Contours res
+    res.contour_starts = <size_t *> &offsets[0]
+    res.xs = <size_t *> &xs[0]
+    res.ys = <size_t *> &ys[0]
     res.max_n_contours = max_size
     res.n_contours = 0
     res.array_length = ys.shape[0]
 
-    CV_find_contours(inp_image, binary_image, &res)
+    cdef CV_Image binary_image
+    binary_image_data = np.zeros_like(inp)
+    image_from_array(binary_image_data, &binary_image)
+
+    CV_find_contours(inp_image, &binary_image, &res)
 
     idx_end = res.contour_starts[res.n_contours]
 
-    return (xs[:idx_end], ys[:idx_end], offsets[:res.n_contours])
+    return (
+            xs[:idx_end], ys[:idx_end],
+            offsets[:res.n_contours],
+            slice_image(binary_image, binary_image_data))
 
 class Contours(object):
 
     def __init__(self, xs, ys, starts, n_contours):
         self.xs = xs
         self.ys = ys
-        self.starts = start
+        self.starts = starts
         self.n_contours = n_contours
 
     def __len__(self):
@@ -160,20 +172,22 @@ class Contours(object):
             yield self[i]
 
     @classmethod
-    def find(self, image):
+    def find(cls, image):
         xs, ys, starts = _find_contours(image)
         assert xs.shape == ys.shape
         assert ys.shape == starts.shape
-        return Contours(xs, ys, starts, starts.shape[0])
+        return cls(xs, ys, starts, starts.shape[0])
 
-cdef init_single_contour(CV_Contours *contours, size_t *dummy_idx, xs, ys):
-    contours->n_contours = 1
-    contours->max_n_contours = 1
-    contours->array_length = xs.shape[0]
-    contours->xs = &xs[0]
-    contours->ys = &ys[0]
-    *dummy_idx = xs.shape[0]
-    contours->contour_starts = dummy_idx
+cdef init_single_contour(CV_Contours *contours, size_t *dummy_idx, 
+        np.ndarray[np.uint_t, ndim=1, mode='c'] xs,
+        np.ndarray[np.uint_t, ndim=1, mode='c'] ys):
+    contours.n_contours = 1
+    contours.max_n_contours = 1
+    contours.array_length = xs.shape[0]
+    contours.xs = <size_t *> &xs[0]
+    contours.ys = <size_t *> &ys[0]
+    dummy_idx[0] = xs.shape[0]
+    contours.contour_starts = dummy_idx
 
 def approx_poly_dp(contour, epsilon):
     xs, ys = contour
@@ -181,20 +195,23 @@ def approx_poly_dp(contour, epsilon):
     cdef size_t dummy_start = 0
 
     cdef CV_Contours inp
-    init_single_contour(&inp, xs, ys)
+    cdef size_t res_dummy
+    init_single_contour(&inp, &res_dummy, xs, ys)
 
     res_xs = np.zeros_like(xs)
     res_ys = np.zeros_like(ys)
+    cdef np.ndarray[np.uint_t, ndim=1, mode='c'] res_starts = np.zeros_like(xs)
 
     cdef CV_Contours res
-    cdef size_t res_dummy
-    init_single_contour(&res, &res_dummy, xs, ys)
+    init_single_contour(&res, &res_dummy, res_xs, res_ys)
+    res.contour_starts = <size_t *> &res_starts[0]
 
     CV_approx_poly_dp(&inp, 0, epsilon, &res)
 
+
     return Contours(res_xs, res_ys, res_starts, res.n_contours)
 
-def warp(np.ndarray[np.uint32_t, ndim=2, mode='c'] inp, contour, warp_size):
+def warp(np.ndarray[np.uint8_t, ndim=2, mode='c'] inp, contour, warp_size):
 
     res = np.zeros_like(inp)
 
@@ -240,7 +257,7 @@ def perimeter(contour):
 
     return CV_perimeter(&contours, 0)
 
-def count_nonzero(np.ndarray[np.uint32_t, ndims=2, mode='c'] inp,
+def count_nonzero(np.ndarray[np.uint8_t, ndim=2, mode='c'] inp,
         x, y, w, h):
 
     cdef CV_Image inp_image
@@ -248,8 +265,8 @@ def count_nonzero(np.ndarray[np.uint32_t, ndims=2, mode='c'] inp,
 
     return CV_count_nonzero(inp_image, x, y, w, h)
 
-def binary_border(np.ndarray[np.uint32_t, ndims=2, mode='c'] inp):
-    cdef np.ndarray[np.uint32_t, ndims=2, mode='c'] res = np.zeros_like(inp)
+def binary_border(np.ndarray[np.uint8_t, ndim=2, mode='c'] inp):
+    cdef np.ndarray[np.uint8_t, ndim=2, mode='c'] res = np.zeros_like(inp)
 
     cdef CV_Image inp_image
     cdef CV_Image res_image
@@ -263,10 +280,14 @@ def binary_border(np.ndarray[np.uint32_t, ndims=2, mode='c'] inp):
 
 def get_perspective_transform(py_contours, warp_size):
 
+    cdef np.ndarray[np.uint_t, ndim=1, mode='c'] xs = py_contours.xs
+    cdef np.ndarray[np.uint_t, ndim=1, mode='c'] ys = py_contours.ys
+    cdef np.ndarray[np.uint_t, ndim=1, mode='c'] starts = py_contours.starts
+
     cdef CV_Contours contours
-    contours.xs = &py_contours.xs[0]
-    contours.ys = &py_contours.ys[0]
-    contours.contour_starts = &py_contours.starts[0]
+    contours.xs = <size_t *> &xs[0]
+    contours.ys = <size_t *> &ys[0]
+    contours.contour_starts = <size_t *> &starts[0]
     contours.array_length = py_contours.xs.shape[0]
     py_contours.n_contours = len(py_contours)
     py_contours.max_n_contours = len(py_contours)
@@ -275,7 +296,7 @@ def get_perspective_transform(py_contours, warp_size):
 
     CV_get_perspective_transform(&contours, 0, warp_size, res)
 
-    res_array = np.zeros((8,), dtype=np.size_t)
+    res_array = np.zeros((8,), dtype=c_size_t)
     for i in range(8):
         res_array[i] = res[i]
 

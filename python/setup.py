@@ -1,8 +1,18 @@
-from setuptools.core import setup
+from setuptools import setup
 from distutils.extension import Extension
-from Cython.Distutils import build_ext
+from Cython.Build import cythonize
+import os
 
-setup(ext_modules=[
+here = os.path.abspath(__file__)
+here = here.split('/')
+
+
+cwd = os.path.join(*here[:-2])
+
+setup(ext_modules=cythonize([
     Extension("au_cv",
-        sources=["cv.pyx", "../src/cv.c"],
-        extra_link_args=['-lm'])])
+        sources=["cv.pyx"],
+        include_dirs=['../include'],
+        extra_objects=['/%s' % os.path.join(cwd, 'lib', 'cv.o')],
+        extra_link_args=['-lm'])],
+    language_level=3))

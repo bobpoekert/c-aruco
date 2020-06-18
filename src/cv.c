@@ -5,6 +5,18 @@
 
 #include "cv.h"
 
+uint16_t CV_stack_box_blur_mult[] = {1, 171, 205, 293, 57, 373, 79, 137, 241, 27, 391, 357, 41, 19, 283, 265};
+uint16_t CV_stack_box_blur_shift[] = {0, 9, 10, 11, 9, 12, 10, 11, 12, 9, 13, 13, 10, 9, 13, 13};
+
+float CV_gaussian_kernel_tab[] = { 1,
+      0.25, 0.5, 0.25,
+      0.0625, 0.25, 0.375, 0.25, 0.0625,
+      0.03125, 0.109375, 0.21875, 0.28125, 0.21875, 0.109375, 0.03125};
+uint8_t CV_gaussian_kernel_offsets[] = {0, 1, 4, 9};
+
+int8_t CV_neighborhood[][2] = 
+  { {1, 0}, {1, -1}, {0, -1}, {-1, -1}, {-1, 0}, {-1, 1}, {0, 1}, {1, 1} };
+#define CV_N_NEIGHBORHOODS 8
 
 void CV_threshold(CV_Image inp, uint8_t thresh) {
 
