@@ -23,9 +23,9 @@ cdef extern from "cv.h":
     void CV_get_perspective_transform(CV_Contours *c, size_t contour_idx, size_t warp_size, CV_PerspectiveTransform res)
 
     void CV_threshold(CV_Image inp, uint8_t thresh)
-    void CV_adaptive_threshold(CV_Image inp, CV_Image outp, size_t *vmin, uint8_t kernel_size, uint8_t thresh)
+    void CV_adaptive_threshold(CV_Image inp, CV_Image blurred, uint8_t thresh)
     uint8_t CV_otsu(CV_Image src)
-    void CV_stack_box_blur(CV_Image image_src, CV_Image image_dst, size_t *vmin, uint8_t kernel_size)
+    void CV_stack_box_blur(CV_Image image_src, uint32_t radius)
 
     void CV_find_contours(CV_Image image_src, CV_Image *binary, CV_Contours *res)
 
@@ -48,26 +48,14 @@ cdef image_from_array(inp, CV_Image *outp):
     outp.height = h
     outp.data = &cinp[0,0]
 
-def stack_box_blur_inplace( inp_py, kernel_size):
+def stack_box_blur_inplace(inp_py, kernel_size):
 
     cdef np.ndarray[np.uint8_t, ndim=2, mode='c'] inp = inp_py
-    cdef np.ndarray[np.uint8_t, ndim=2, mode='c'] scratch = np.zeros_like(inp_py)
 
     cdef CV_Image inp_image
-    cdef CV_Image scratch_image
-
     image_from_array(inp, &inp_image)
-    image_from_array(scratch, &scratch_image)
 
-    cdef np.ndarray[np.uint_t, ndim=1, mode='c'] vmin =\
-        np.zeros((max(*inp_py.shape),), dtype=np.uint)
-
-    CV_stack_box_blur(
-            inp_image, scratch_image,
-            <size_t *> &vmin[0],
-            kernel_size)
-
-    return scratch
+    CV_stack_box_blur(inp_image, kernel_size)
 
 def stack_box_blur(inp, kernel_size):
     res = inp.copy()
@@ -89,17 +77,17 @@ def threshold(inp, thresh):
 def adaptive_threshold(py_inp, kernel_size, thresh):
     res = py_inp.copy()
     cdef np.ndarray[np.uint8_t, ndim=2, mode='c'] inp = res
-    cdef np.ndarray[np.uint8_t, ndim=2, mode='c'] scratch = np.zeros_like(inp)
+    cdef np.ndarray[np.uint8_t, ndim=2, mode='c'] blurred = res.copy()
 
     cdef CV_Image inp_image
-    cdef CV_Image scratch_image
+    cdef CV_Image blurred_image
 
     image_from_array(inp, &inp_image)
-    image_from_array(scratch, &scratch_image)
+    image_from_array(blurred, &blurred_image)
 
-    cdef np.ndarray[np.uint_t, ndim=1, mode='c'] vmin = np.zeros((max(*py_inp.shape),), dtype=np.uint)
+    CV_stack_box_blur(blurred_image, kernel_size)
 
-    CV_adaptive_threshold(inp_image, scratch_image, <size_t *> &vmin[0], kernel_size, thresh)
+    CV_adaptive_threshold(inp_image, blurred_image, thresh)
 
     return res
 

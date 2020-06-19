@@ -43,16 +43,9 @@ typedef size_t CV_PerspectiveTransform[8];
 void CV_get_perspective_transform(CV_Contours *c, size_t contour_idx, size_t warp_size, CV_PerspectiveTransform res);
 
 void CV_threshold(CV_Image inp, uint8_t thresh);
-void CV_adaptive_threshold(
-        CV_Image inp, CV_Image scratch,
-        size_t *vmin,
-        uint8_t kernel_size, uint8_t thresh);
+void CV_adaptive_threshold(CV_Image inp, CV_Image blurred, uint8_t thresh);
 uint8_t CV_otsu(CV_Image src);
-void CV_stack_box_blur(
-        CV_Image image_src,
-        CV_Image image_scratch,
-        size_t *vmin,
-        ssize_t radius);
+void CV_stack_box_blur(CV_Image image_src, uint32_t radius);
 
 
 void CV_find_contours(CV_Image image_src, CV_Image *binary, CV_Contours *res);

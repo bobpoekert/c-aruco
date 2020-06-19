@@ -27,19 +27,16 @@ void CV_threshold(CV_Image inp, uint8_t thresh) {
 }
 
 void CV_adaptive_threshold(
-        CV_Image inp,
-        CV_Image scratch,
-        size_t *vmin,
-        uint8_t kernel_size, uint8_t thresh) {
+        CV_Image inp, CV_Image blurred,
+        uint8_t thresh) {
 
-    assert(inp.width == scratch.width && inp.height == scratch.height);
+    assert(inp.width == blurred.width);
+    assert(inp.height == blurred.height);
 
     uint8_t *src = inp.data;
-    uint8_t *dst = scratch.data;
+    uint8_t *dst = blurred.data;
     size_t len = inp.width * inp.height;
     uint8_t tab[768];
-
-    CV_stack_box_blur(inp, scratch, vmin, kernel_size);
 
     for (size_t i=0; i < 768; i++) {
         tab[i] = (i - 255 <= -thresh) ? 255 : 0;
@@ -105,173 +102,227 @@ uint8_t CV_otsu(CV_Image image_src) {
 
 #define DV_SIZE 64
 
-/* adapted from http://incubator.quasimondo.com/processing/stackblur.pde */
-void CV_stack_box_blur(
-        CV_Image image_src,
-        CV_Image image_scratch,
-        size_t *vmin,
-        ssize_t radius) {
+/* adapted from http://vitiy.info/Code/stackblur.cpp */
 
-    debug("start");
-    assert(radius < 16);
+static unsigned short const stackblur_mul[255] =
+{
+		512,512,456,512,328,456,335,512,405,328,271,456,388,335,292,512,
+		454,405,364,328,298,271,496,456,420,388,360,335,312,292,273,512,
+		482,454,428,405,383,364,345,328,312,298,284,271,259,496,475,456,
+		437,420,404,388,374,360,347,335,323,312,302,292,282,273,265,512,
+		497,482,468,454,441,428,417,405,394,383,373,364,354,345,337,328,
+		320,312,305,298,291,284,278,271,265,259,507,496,485,475,465,456,
+		446,437,428,420,412,404,396,388,381,374,367,360,354,347,341,335,
+		329,323,318,312,307,302,297,292,287,282,278,273,269,265,261,512,
+		505,497,489,482,475,468,461,454,447,441,435,428,422,417,411,405,
+		399,394,389,383,378,373,368,364,359,354,350,345,341,337,332,328,
+		324,320,316,312,309,305,301,298,294,291,287,284,281,278,274,271,
+		268,265,262,259,257,507,501,496,491,485,480,475,470,465,460,456,
+		451,446,442,437,433,428,424,420,416,412,408,404,400,396,392,388,
+		385,381,377,374,370,367,363,360,357,354,350,347,344,341,338,335,
+		332,329,326,323,320,318,315,312,310,307,304,302,299,297,294,292,
+		289,287,285,282,280,278,275,273,271,269,267,265,263,261,259
+};
 
-    uint8_t *pix = image_src.data;
-    uint8_t *scratch = image_scratch.data;
+static unsigned char const stackblur_shr[255] =
+{
+		9, 11, 12, 13, 13, 14, 14, 15, 15, 15, 15, 16, 16, 16, 16, 17,
+		17, 17, 17, 17, 17, 17, 18, 18, 18, 18, 18, 18, 18, 18, 18, 19,
+		19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 20, 20, 20,
+		20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 21,
+		21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21,
+		21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 22, 22, 22, 22, 22, 22,
+		22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22,
+		22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 23,
+		23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23,
+		23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23,
+		23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23,
+		23, 23, 23, 23, 23, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24,
+		24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24,
+		24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24,
+		24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24,
+		24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24
+};
 
-    assert(image_src.width == image_scratch.width && image_src.height == image_scratch.height);
+/// Stackblur algorithm body
+void CV_stack_blur_job(unsigned char* src,				///< input image data
+	   			  unsigned int w,					///< image width
+				  unsigned int h,					///< image height
+				  unsigned int radius,				///< blur intensity (should be in 2..254 range)
+				  unsigned char* stack				///< stack buffer
+				  )
+{
+	unsigned int x, y, xp, yp, i;
+	unsigned int sp;
+	unsigned int stack_start;
+	unsigned char* stack_ptr;
 
-    size_t w=image_src.width;
-    size_t h=image_src.height;
-    size_t wm=w-1;
-    size_t hm=h-1;
-    size_t wh=w*h;
-    size_t div=radius+radius+1;
+	unsigned char* src_ptr;
+	unsigned char* dst_ptr;
+
+	unsigned long sum_r;
+	unsigned long sum_in_r;
+	unsigned long sum_out_r;
+
+	unsigned int wm = w - 1;
+	unsigned int hm = h - 1;
+	unsigned int w4 = w;
+	unsigned int div = (radius * 2) + 1;
+	unsigned int mul_sum = stackblur_mul[radius];
+	unsigned char shr_sum = stackblur_shr[radius];
 
 
-    ssize_t sum,x,y,i,p,yp,yi,yw;
+    int minY = 0;
+    int maxY = h;
 
-    size_t divsum=(div+1)>>1;
-    divsum *= divsum;
-   
-    assert(divsum < 64);
-    size_t dv[DV_SIZE * 256];
-    memset(dv, 0, DV_SIZE * 256 * sizeof(size_t));
+    for(y = minY; y < maxY; y++)
+    {
+        sum_r =
+        sum_in_r =
+        sum_out_r = 0;
 
-    for (i=0; i < 256*divsum; i++){
-        dv[i]=(i/divsum);
+        src_ptr = src + w4 * y; // start of line (0,y)
+
+        for(i = 0; i <= radius; i++)
+        {
+            stack_ptr    = &stack[ i ];
+            stack_ptr[0] = src_ptr[0];
+            sum_r += src_ptr[0] * (i + 1);
+            sum_out_r += src_ptr[0];
+        }
+
+
+        for(i = 1; i <= radius; i++)
+        {
+            if (i <= wm) src_ptr += 1;
+            stack_ptr = &stack[(i + radius) ];
+            stack_ptr[0] = src_ptr[0];
+            sum_r += src_ptr[0] * (radius + 1 - i);
+            sum_in_r += src_ptr[0];
+        }
+
+
+        sp = radius;
+        xp = radius;
+        if (xp > wm) xp = wm;
+        src_ptr = src + (xp + y * w); //   img.pix_ptr(xp, y);
+        dst_ptr = src + y * w4; // img.pix_ptr(0, y);
+        for(x = 0; x < w; x++)
+        {
+            dst_ptr[0] = (sum_r * mul_sum) >> shr_sum;
+            dst_ptr++;
+
+            sum_r -= sum_out_r;
+
+            stack_start = sp + div - radius;
+            if (stack_start >= div) stack_start -= div;
+            stack_ptr = &stack[stack_start];
+
+            sum_out_r -= stack_ptr[0];
+
+            if(xp < wm)
+            {
+                src_ptr++;
+                ++xp;
+            }
+
+            stack_ptr[0] = src_ptr[0];
+
+            sum_in_r += src_ptr[0];
+            sum_r    += sum_in_r;
+
+            ++sp;
+            if (sp >= div) sp = 0;
+            stack_ptr = &stack[sp];
+
+            sum_out_r += stack_ptr[0];
+            sum_in_r  -= stack_ptr[0];
+
+
+        }
+
     }
 
-    debug("divsum");
-    yw = yi = 0;
+    int minX = 0;
+    int maxX = w;
 
+    for(x = minX; x < maxX; x++)
+    {
+        sum_r =
+        sum_in_r =
+        sum_out_r = 0;
 
-    size_t stack[DV_SIZE];
-    memset(stack, 0, DV_SIZE * sizeof(size_t));
-
-    size_t stackpointer;
-    size_t stackstart;
-    uint8_t sir;
-    size_t rbs;
-    size_t r1 = radius+1;
-
-    uint32_t outsum;
-    uint32_t insum;
-
-    debug("pass 1\n");
-    for (y=0; y < h; y++){
-
-        insum = outsum = sum = 0;
-
-        for(i = -radius; i <= radius; i++){
-            p = pix[yi + min(wm,max(i,0))];
-            sir = stack[i+radius];
-            sir = p;
-            rbs = r1 - abs(i);
-            sum += sir * rbs;
-            if (i>0){
-                insum += sir;
-            } else {
-                outsum += sir;
-            }
+        src_ptr = src + x; // x,0
+        for(i = 0; i <= radius; i++)
+        {
+            stack_ptr    = &stack[i];
+            stack_ptr[0] = src_ptr[0];
+            sum_r           += src_ptr[0] * (i + 1);
+            sum_out_r       += src_ptr[0];
         }
-        stackpointer=radius;
+        for(i = 1; i <= radius; i++)
+        {
+            if(i <= hm) src_ptr += w4; // +stride
 
-        for (x=0; x < w; x++){
-
-            assert(yi < wh);
-            scratch[yi] = dv[sum];
-
-            sum -= outsum;
-
-            stackstart = stackpointer - radius + div;
-            sir = stack[stackstart % div];
-
-            outsum -= sir;
-
-            if(y == 0){
-                vmin[x] = min(x + radius + 1, wm);
-            }
-            p = pix[yw + vmin[x]];
-
-            sir = p;
-
-            insum += sir;
-
-            sum += insum;
-
-            stackpointer = (stackpointer + 1) % div;
-            sir = stack[stackpointer % div];
-
-            outsum += sir;
-
-            insum -= sir;
-
-            yi++;
+            stack_ptr = &stack[(i + radius)];
+            stack_ptr[0] = src_ptr[0];
+            sum_r += src_ptr[0] * (radius + 1 - i);
+            sum_in_r += src_ptr[0];
         }
-        yw += w;
-    }
 
+        sp = radius;
+        yp = radius;
+        if (yp > hm) yp = hm;
+        src_ptr = src + (x + yp * w); // img.pix_ptr(x, yp);
+        dst_ptr = src + x; 			  // img.pix_ptr(x, 0);
+        for(y = 0; y < h; y++)
+        {
+            dst_ptr[0] = (sum_r * mul_sum) >> shr_sum;
+            dst_ptr += w4;
 
-    debug("pass 2\n");
-    for (x=0; x < w; x++){
-        insum = outsum = sum = 0;
-        yp = -radius * w;
-        for(i=-radius; i <= radius; i++){
-            yi = max(0,yp) + x;
+            sum_r -= sum_out_r;
 
-            sir = stack[i+radius];
+            stack_start = sp + div - radius;
+            if(stack_start >= div) stack_start -= div;
+            stack_ptr = &stack[stack_start];
 
-            assert(yi < wh);
-            sir = scratch[yi];
+            sum_out_r -= stack_ptr[0];
 
-            rbs = r1 - abs(i);
-
-            sum += scratch[yi] * rbs;
-
-            if (i>0){
-                insum += sir;
-            } else {
-                outsum += sir;
+            if(yp < hm)
+            {
+                src_ptr += w4; // stride
+                ++yp;
             }
 
-            if(i<hm){
-                yp+=w;
-            }
-        }
-        yi = x;
-        stackpointer = radius;
-        for (y=0; y < h; y++){
-            pix[yi] = dv[sum];
+            stack_ptr[0] = src_ptr[0];
 
-            sum -= outsum;
+            sum_in_r += src_ptr[0];
+            sum_r    += sum_in_r;
 
-            stackstart = stackpointer - radius + div;
-            sir = stack[stackstart % div];
+            ++sp;
+            if (sp >= div) sp = 0;
+            stack_ptr = &stack[sp];
 
-            outsum -= sir;
-
-            if(x == 0){
-                vmin[y] = min(y+r1,hm) * w;
-            }
-            p = x + vmin[y];
-
-            sir = scratch[p];
-
-            insum += sir;
-
-            sum += insum;
-
-            stackpointer = (stackpointer + 1) % div;
-            sir = stack[stackpointer];
-
-            outsum += sir;
-
-            insum -= sir;
-
-            yi += w;
+            sum_out_r += stack_ptr[0];
+            sum_in_r  -= stack_ptr[0];
         }
     }
 
+}
+
+void CV_stack_box_blur(CV_Image image_src, uint32_t radius) {
+
+    assert(radius <= 254);
+    assert(radius >= 2);
+
+    uint8_t stack[254 * 2 + 1];
+
+
+    CV_stack_blur_job(
+            image_src.data,
+            image_src.width, image_src.height,
+            radius,
+            stack);
 
 }
 
