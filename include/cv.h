@@ -38,28 +38,22 @@ typedef struct CV_Contours {
 } CV_Contours;
 
 
-#define CV_BLUR_STACK_SIZE (16 * 16 + 1)
-
-typedef struct CV_BlurStack {
-
-    uint32_t colors[CV_BLUR_STACK_SIZE];
-    uint16_t start;
-
-} CV_BlurStack;
-
 typedef size_t CV_PerspectiveTransform[8];
 
 void CV_get_perspective_transform(CV_Contours *c, size_t contour_idx, size_t warp_size, CV_PerspectiveTransform res);
 
-void CV_BlurStack_init(CV_BlurStack *inp);
-
 void CV_threshold(CV_Image inp, uint8_t thresh);
-void CV_adaptive_threshold(CV_Image inp, CV_Image outp, uint8_t kernel_size, uint8_t thresh);
+void CV_adaptive_threshold(
+        CV_Image inp, CV_Image scratch,
+        size_t *vmin,
+        uint8_t kernel_size, uint8_t thresh);
 uint8_t CV_otsu(CV_Image src);
-void CV_stack_box_blur(CV_Image image_src, CV_Image image_dst, uint8_t kernel_size);
+void CV_stack_box_blur(
+        CV_Image image_src,
+        CV_Image image_scratch,
+        size_t *vmin,
+        ssize_t radius);
 
-void CV_gaussian_blur(
-        CV_Image src_image, CV_Image dst_image, CV_Image mean_image, uint8_t kernel_size);
 
 void CV_find_contours(CV_Image image_src, CV_Image *binary, CV_Contours *res);
 

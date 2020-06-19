@@ -2,17 +2,16 @@
 #include <string.h>
 #include <math.h>
 #include <stdlib.h>
+#include <stdio.h>
 
 #include "cv.h"
 
-uint16_t CV_stack_box_blur_mult[] = {1, 171, 205, 293, 57, 373, 79, 137, 241, 27, 391, 357, 41, 19, 283, 265};
-uint16_t CV_stack_box_blur_shift[] = {0, 9, 10, 11, 9, 12, 10, 11, 12, 9, 13, 13, 10, 9, 13, 13};
+/*void debug(char *s) {
+    printf("%s\n", s);
+    fflush(stdout);
+}*/
 
-float CV_gaussian_kernel_tab[] = { 1,
-      0.25, 0.5, 0.25,
-      0.0625, 0.25, 0.375, 0.25, 0.0625,
-      0.03125, 0.109375, 0.21875, 0.28125, 0.21875, 0.109375, 0.03125};
-uint8_t CV_gaussian_kernel_offsets[] = {0, 1, 4, 9};
+#define debug(v) 
 
 int8_t CV_neighborhood[][2] = 
   { {1, 0}, {1, -1}, {0, -1}, {-1, -1}, {-1, 0}, {-1, 1}, {0, 1}, {1, 1} };
@@ -27,16 +26,20 @@ void CV_threshold(CV_Image inp, uint8_t thresh) {
 
 }
 
-void CV_adaptive_threshold(CV_Image inp, CV_Image outp, uint8_t kernel_size, uint8_t thresh) {
+void CV_adaptive_threshold(
+        CV_Image inp,
+        CV_Image scratch,
+        size_t *vmin,
+        uint8_t kernel_size, uint8_t thresh) {
 
-    assert(inp.width == outp.width && inp.height == outp.height);
+    assert(inp.width == scratch.width && inp.height == scratch.height);
 
     uint8_t *src = inp.data;
-    uint8_t *dst = outp.data;
+    uint8_t *dst = scratch.data;
     size_t len = inp.width * inp.height;
     uint8_t tab[768];
 
-    CV_stack_box_blur(inp, outp, kernel_size);
+    CV_stack_box_blur(inp, scratch, vmin, kernel_size);
 
     for (size_t i=0; i < 768; i++) {
         tab[i] = (i - 255 <= -thresh) ? 255 : 0;
@@ -96,178 +99,179 @@ uint8_t CV_otsu(CV_Image image_src) {
 
 }
 
-void CV_BlurStack_init(CV_BlurStack *stack) {
-    memset(stack->colors, 0, CV_BLUR_STACK_SIZE);
-    stack->start = 0;
-}
 
-void CV_stack_box_blur(CV_Image image_src, CV_Image image_dst, uint8_t kernel_size) {
+#define min(a, b) ((a > b) ? b : a)
+#define max(a, b) ((a > b) ? a : b)
 
-    assert(kernel_size < 16);
+#define DV_SIZE 64
 
-    uint8_t *src = image_src.data;
-    uint8_t *dst = image_dst.data;
+/* adapted from http://incubator.quasimondo.com/processing/stackblur.pde */
+void CV_stack_box_blur(
+        CV_Image image_src,
+        CV_Image image_scratch,
+        size_t *vmin,
+        ssize_t radius) {
 
-    assert(image_src.width == image_dst.width && image_src.height == image_dst.height);
+    debug("start");
+    assert(radius < 16);
 
-    size_t height = image_src.height;
-    size_t width = image_src.width;
+    uint8_t *pix = image_src.data;
+    uint8_t *scratch = image_scratch.data;
 
-    size_t size = kernel_size + kernel_size + 1;
-    size_t radius = kernel_size + 1;
+    assert(image_src.width == image_scratch.width && image_src.height == image_scratch.height);
 
-    uint8_t mult = CV_stack_box_blur_mult[kernel_size];
-    uint8_t shift = CV_stack_box_blur_shift[kernel_size];
-
-    CV_BlurStack stack;
-    CV_BlurStack_init(&stack);
-
-    uint32_t color;
-
-    size_t sum, pos, start, p, x, y, i;
+    size_t w=image_src.width;
+    size_t h=image_src.height;
+    size_t wm=w-1;
+    size_t hm=h-1;
+    size_t wh=w*h;
+    size_t div=radius+radius+1;
 
 
-    pos = 0;
+    ssize_t sum,x,y,i,p,yp,yi,yw;
 
-    for (y = 0; y < height; ++y) {
-        start = pos;
+    size_t divsum=(div+1)>>1;
+    divsum *= divsum;
+   
+    assert(divsum < 64);
+    size_t dv[DV_SIZE * 256];
+    memset(dv, 0, DV_SIZE * 256 * sizeof(size_t));
 
-        color = src[pos];
-        sum = radius * color;
-
-        stack.start = radius;
-        memset(stack.colors, color, radius);
-        for (i = 1; i < radius; ++i) {
-            stack.colors[stack.start] = src[pos + 1];
-            sum += stack.colors[stack.start];
-            stack.start++;
-        }
-
-        stack.start = 0;
-        for(x = 0; x < width; ++x) {
-            dst[pos++] = (sum * mult) >> shift;
-
-            p = x + radius;
-            p = start + (p < (width - 1) ? p : (width - 1));
-            sum -= stack.colors[stack.start] - src[p];
-
-            stack.colors[stack.start] = src[p];
-            stack.start++;
-        }
-    } /* end y */
-
-    for (x = 0; x < width; ++x) {
-        pos = x;
-        start = pos + width;
-
-        color = dst[pos];
-        sum = radius * color;
-
-        memset(stack.colors, color, radius);
-        stack.start = radius;
-        for (i = 1; i < radius; ++i) {
-            stack.colors[stack.start] = dst[start];
-            sum += stack.colors[stack.start];
-            stack.start++;
-
-            start += width;
-        }
-
-        stack.start = 0;
-        for (y = 0; y < height; ++y) {
-            dst[pos] = (sum * mult) >> shift;
-
-            p = y + radius;
-            p = x + ( (p < (height - 1) ? p : (height - 1)) * width );
-            sum -= stack.colors[stack.start] - dst[p];
-
-            stack.colors[stack.start] = dst[p];
-            stack.start++;
-
-            pos += width;
-        } /* end y */
-    } /* end x */
-
-}
-
-void CV_gaussian_blur_filter(CV_Image src_image, CV_Image dst_image, uint8_t kernel_size, uint8_t is_horizontal) {
-
-    assert(src_image.width == dst_image.width && src_image.height == dst_image.height);
-
-    uint8_t *src = src_image.data;
-    uint8_t *dst = dst_image.data;
-
-    size_t height = src_image.height;
-    size_t width = src_image.width;
-
-    size_t pos = 0;
-    size_t cur = 0;
-    float value;
-    size_t i, j, k;
-
-    if (kernel_size <= 7 && kernel_size % 2 == 1) kernel_size >>= 1;
-
-    float kernel[7];
-
-    uint8_t kernel_idx = CV_gaussian_kernel_offsets[kernel_size];
-    uint8_t kernel_length = kernel_size ? (CV_gaussian_kernel_offsets[kernel_size] - CV_gaussian_kernel_offsets[kernel_size - 1]) : 1;
-    uint16_t limit = kernel_length >> 1;
-
-    if ((kernel_size <= 7) && (kernel_size % 2 == 1)) {
-        uint8_t k2 = kernel_size >> 1;
-        memcpy(kernel,
-                CV_gaussian_kernel_tab,
-                sizeof(float) * (CV_gaussian_kernel_offsets[k2 + 1] - CV_gaussian_kernel_offsets[k2]));
-    } else {
-        float center = (kernel_size - 1.0) * 0.5;
-        float sigma = 0.8 + (0.3 * (center - 1.0));
-        float scale2X = -0.5 / (sigma * sigma);
-        float sum = 0.0;
-        for (uint8_t i=0; i < kernel_size; i++) {
-            float x = i - center;
-            kernel[i] = exp(scale2X * x * x);
-            sum += kernel[i];
-        }
-        sum = 1.0 / sum;
-        for (i = 0; i < kernel_size; ++i) {
-            kernel[i] *= sum;
-        }
+    for (i=0; i < 256*divsum; i++){
+        dv[i]=(i/divsum);
     }
 
-    for (i=0; i < height; ++i) {
-        for (j = 0; j < width; ++j) {
-            value = 0.0;
+    debug("divsum");
+    yw = yi = 0;
 
-            for (k = -limit; k <= limit; ++k) {
-                if (is_horizontal) {
-                    cur = pos + k;
-                    if (j + k < 0) {
-                        cur = pos;
-                    } else if (j + k >= width) {
-                        cur = pos;
-                    }
-                } else {
-                    cur = pos + (k * width);
-                    if (i + k < 0) {
-                        cur = pos;
-                    } else if (i + k >= height) {
-                        cur = pos;
-                    }
-                }
 
-                value += kernel[limit + k] * src[cur];
+    size_t stack[DV_SIZE];
+    memset(stack, 0, DV_SIZE * sizeof(size_t));
+
+    size_t stackpointer;
+    size_t stackstart;
+    uint8_t sir;
+    size_t rbs;
+    size_t r1 = radius+1;
+
+    uint32_t outsum;
+    uint32_t insum;
+
+    debug("pass 1\n");
+    for (y=0; y < h; y++){
+
+        insum = outsum = sum = 0;
+
+        for(i = -radius; i <= radius; i++){
+            p = pix[yi + min(wm,max(i,0))];
+            sir = stack[i+radius];
+            sir = p;
+            rbs = r1 - abs(i);
+            sum += sir * rbs;
+            if (i>0){
+                insum += sir;
+            } else {
+                outsum += sir;
+            }
+        }
+        stackpointer=radius;
+
+        for (x=0; x < w; x++){
+
+            assert(yi < wh);
+            scratch[yi] = dv[sum];
+
+            sum -= outsum;
+
+            stackstart = stackpointer - radius + div;
+            sir = stack[stackstart % div];
+
+            outsum -= sir;
+
+            if(y == 0){
+                vmin[x] = min(x + radius + 1, wm);
+            }
+            p = pix[yw + vmin[x]];
+
+            sir = p;
+
+            insum += sir;
+
+            sum += insum;
+
+            stackpointer = (stackpointer + 1) % div;
+            sir = stack[stackpointer % div];
+
+            outsum += sir;
+
+            insum -= sir;
+
+            yi++;
+        }
+        yw += w;
+    }
+
+
+    debug("pass 2\n");
+    for (x=0; x < w; x++){
+        insum = outsum = sum = 0;
+        yp = -radius * w;
+        for(i=-radius; i <= radius; i++){
+            yi = max(0,yp) + x;
+
+            sir = stack[i+radius];
+
+            assert(yi < wh);
+            sir = scratch[yi];
+
+            rbs = r1 - abs(i);
+
+            sum += scratch[yi] * rbs;
+
+            if (i>0){
+                insum += sir;
+            } else {
+                outsum += sir;
             }
 
-            dst[pos++] = (uint8_t) (is_horizontal ? value : (value + 0.5));
+            if(i<hm){
+                yp+=w;
+            }
+        }
+        yi = x;
+        stackpointer = radius;
+        for (y=0; y < h; y++){
+            pix[yi] = dv[sum];
+
+            sum -= outsum;
+
+            stackstart = stackpointer - radius + div;
+            sir = stack[stackstart % div];
+
+            outsum -= sir;
+
+            if(x == 0){
+                vmin[y] = min(y+r1,hm) * w;
+            }
+            p = x + vmin[y];
+
+            sir = scratch[p];
+
+            insum += sir;
+
+            sum += insum;
+
+            stackpointer = (stackpointer + 1) % div;
+            sir = stack[stackpointer];
+
+            outsum += sir;
+
+            insum -= sir;
+
+            yi += w;
         }
     }
 
-}
-
-void CV_gaussian_blur(CV_Image src_image, CV_Image dst_image, CV_Image mean_image, uint8_t kernel_size) {
-
-    CV_gaussian_blur_filter(src_image, mean_image, kernel_size, 1);
-    CV_gaussian_blur_filter(mean_image, dst_image, kernel_size, 0);
 
 }
 

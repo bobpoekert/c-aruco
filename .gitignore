@@ -53,5 +53,8 @@ dkms.conf
 
 #python
 python/*.c
+python/build/
+python/__pycache__/
+*.pyc
 python/*.so
-python/*.pyc
+python/cython_debug/
