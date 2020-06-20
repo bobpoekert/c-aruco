@@ -166,22 +166,18 @@ void CV_stack_blur_job(unsigned char* src,				///< input image data
 
 	unsigned int wm = w - 1;
 	unsigned int hm = h - 1;
-	unsigned int w4 = w;
 	unsigned int div = (radius * 2) + 1;
 	unsigned int mul_sum = stackblur_mul[radius];
 	unsigned char shr_sum = stackblur_shr[radius];
 
-
-    int minY = 0;
-    int maxY = h;
-
-    for(y = minY; y < maxY; y++)
+    
+    for(y = 0; y < h; y++)
     {
         sum_r =
         sum_in_r =
         sum_out_r = 0;
 
-        src_ptr = src + w4 * y; // start of line (0,y)
+        src_ptr = src + w * y; // start of line (0,y)
 
         for(i = 0; i <= radius; i++)
         {
@@ -191,22 +187,20 @@ void CV_stack_blur_job(unsigned char* src,				///< input image data
             sum_out_r += src_ptr[0];
         }
 
-
         for(i = 1; i <= radius; i++)
         {
-            if (i <= wm) src_ptr += 1;
-            stack_ptr = &stack[(i + radius) ];
+            if (i <= wm) src_ptr++;
+            stack_ptr = &stack[i + radius];
             stack_ptr[0] = src_ptr[0];
             sum_r += src_ptr[0] * (radius + 1 - i);
             sum_in_r += src_ptr[0];
         }
 
-
         sp = radius;
         xp = radius;
         if (xp > wm) xp = wm;
         src_ptr = src + (xp + y * w); //   img.pix_ptr(xp, y);
-        dst_ptr = src + y * w4; // img.pix_ptr(0, y);
+        dst_ptr = src + y * w; // img.pix_ptr(0, y);
         for(x = 0; x < w; x++)
         {
             dst_ptr[0] = (sum_r * mul_sum) >> shr_sum;
@@ -238,33 +232,41 @@ void CV_stack_blur_job(unsigned char* src,				///< input image data
             sum_out_r += stack_ptr[0];
             sum_in_r  -= stack_ptr[0];
 
-
         }
 
     }
 
-    int minX = 0;
-    int maxX = w;
+    wm = w - 1;
+	hm = h - 1;
+	div = (radius * 2) + 1;
+	mul_sum = stackblur_mul[radius];
+	shr_sum = stackblur_shr[radius];
+	
+    x= y= xp= yp= i =
+	sp =
+	stack_start =
+	stack_ptr = 0;
 
-    for(x = minX; x < maxX; x++)
+    memset(stack, 0, 254 * 2 + 1);
+
+    for(x = w; x < w; x++)
     {
         sum_r =
         sum_in_r =
         sum_out_r = 0;
 
-        src_ptr = src + x; // x,0
+        src_ptr = src + x; // start of line x
         for(i = 0; i <= radius; i++)
         {
-            stack_ptr    = &stack[i];
+            stack_ptr    = &stack[ i ];
             stack_ptr[0] = src_ptr[0];
-            sum_r           += src_ptr[0] * (i + 1);
-            sum_out_r       += src_ptr[0];
+            sum_r += src_ptr[0] * (i + 1);
+            sum_out_r += src_ptr[0];
         }
         for(i = 1; i <= radius; i++)
         {
-            if(i <= hm) src_ptr += w4; // +stride
-
-            stack_ptr = &stack[(i + radius)];
+            if (i <= wm) src_ptr += w;
+            stack_ptr = &stack[i + radius];
             stack_ptr[0] = src_ptr[0];
             sum_r += src_ptr[0] * (radius + 1 - i);
             sum_in_r += src_ptr[0];
@@ -278,7 +280,7 @@ void CV_stack_blur_job(unsigned char* src,				///< input image data
         for(y = 0; y < h; y++)
         {
             dst_ptr[0] = (sum_r * mul_sum) >> shr_sum;
-            dst_ptr += w4;
+            dst_ptr += w;
 
             sum_r -= sum_out_r;
 
@@ -290,7 +292,7 @@ void CV_stack_blur_job(unsigned char* src,				///< input image data
 
             if(yp < hm)
             {
-                src_ptr += w4; // stride
+                src_ptr += w; // stride
                 ++yp;
             }
 

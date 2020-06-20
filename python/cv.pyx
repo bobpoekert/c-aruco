@@ -49,6 +49,7 @@ cdef image_from_array(inp, CV_Image *outp):
     outp.data = &cinp[0,0]
 
 def stack_box_blur_inplace(inp_py, kernel_size):
+    assert kernel_size >= 2
 
     cdef np.ndarray[np.uint8_t, ndim=2, mode='c'] inp = inp_py
 
