@@ -21,7 +21,7 @@ void CV_threshold(CV_Image inp, uint8_t thresh) {
 
     size_t inp_size = inp.width * inp.height;
     for(; inp_size > 0; inp_size--) {
-        inp.data[inp_size] = inp.data[inp_size] >= thresh ? 1 : 0;
+        inp.data[inp_size] = (inp.data[inp_size] >= thresh) ? 255 : 0;
     }
 
 }
@@ -53,15 +53,15 @@ uint8_t CV_otsu(CV_Image image_src) {
     size_t len = image_src.width * image_src.height;
     size_t hist[256];
     uint8_t threshold = 0;
-    size_t sum = 0;
-    size_t sum_b = 0;
-    size_t w_b = 0;
-    size_t w_f = 0;
-    size_t max = 0;
+    float sum = 0;
+    float sum_b = 0;
+    float w_b = 0;
+    float w_f = 0; 
+    float max = 0;
     
-    size_t mu, between, i;
+    float mu, between, i;
 
-    memset(hist, 0, 256);
+    memset(hist, 0, 256 * sizeof(size_t));
 
     for (size_t i=0; i < len; i++) {
         hist[src[i]]++;
@@ -332,8 +332,13 @@ void CV_neighborhood_deltas(size_t width, int16_t res[]) {
     for (size_t i=0; i < CV_N_NEIGHBORHOODS; ++i) {
         res[i] = CV_neighborhood[i][0] + (CV_neighborhood[i][1] * width);
     }
+
+    for (size_t i=0; i < CV_N_NEIGHBORHOODS; ++i) {
+        res[i + CV_N_NEIGHBORHOODS] = res[i];
+    }
 }
 
+/* add to the current contour */
 void CV_contour_push(CV_Contours *res, size_t x, size_t y) {
     assert(res->n_contours < res->max_n_contours);
     size_t contour_idx = res->contour_starts[res->n_contours];
@@ -342,6 +347,12 @@ void CV_contour_push(CV_Contours *res, size_t x, size_t y) {
     res->contour_starts[res->n_contours]++;
 }
 
+/* start a new contour */
+void CV_contour_append(CV_Contours *res) {
+    if (res->n_contours >= res->max_n_contours) return;
+    res->n_contours++;
+    res->contour_starts[res->n_contours] = res->contour_starts[res->n_contours - 1];
+}
 
 void CV_contours_get(CV_Contours *contour, size_t idx, size_t point_idx,
         size_t *x, size_t *y) {
@@ -352,7 +363,7 @@ void CV_contours_get(CV_Contours *contour, size_t idx, size_t point_idx,
 }
 
 size_t CV_contours_length(CV_Contours *contour, size_t contour_idx) {
-    assert(contour_idx < contour->n_contours);
+    assert(contour_idx <= contour->n_contours);
     if (contour_idx == 0) {
         return contour->contour_starts[0];
     } else {
@@ -361,111 +372,109 @@ size_t CV_contours_length(CV_Contours *contour, size_t contour_idx) {
 }
 
 void CV_border_following(
-        CV_Image src_image,
-        size_t pos, size_t nbd,
+        int16_t *src,
+        size_t pos, ssize_t nbd,
         size_t x_start, size_t y_start,
         uint8_t hole,
         int16_t deltas[], 
         CV_Contours *res) {
 
-    size_t pos1, pos3, pos4, s, s_end, s_prev;
-
-    uint8_t *src = src_image.data;
+    int pos1, pos3, pos4;
+    unsigned int s, s_end, s_prev;
 
     size_t x = x_start;
     size_t y = y_start;
 
-
-    s = s_end = hole ? 0 : 4;
-
-    do {
+    s = s_end = hole? 0: 4;
+    do{
         s = (s - 1) & 7;
-        pos1 = pos + deltas[s % CV_N_NEIGHBORHOODS];
-        if (src[pos1] != 0) {
+        pos1 = pos + deltas[s];
+        if (src[pos1] != 0){
             break;
         }
-    } while (s != s_end);
+    }while(s != s_end);
 
-    if (s == s_end) {
+    if (s == s_end){
         src[pos] = -nbd;
         CV_contour_push(res, x, y);
-    } else {
+
+    }else{
         pos3 = pos;
         s_prev = s ^ 4;
 
-        while(1) {
+        while(1){
             s_end = s;
-            do {
-                pos4 = pos3 + deltas[(++s) % CV_N_NEIGHBORHOODS];
-            } while(src[pos4] == 0);
+
+            do{
+                pos4 = pos3 + deltas[++ s];
+            }while(src[pos4] == 0);
 
             s &= 7;
 
-            if (s - 1 < s_end) {
+            if ( s - 1 < s_end ){
                 src[pos3] = -nbd;
-            } else if (src[pos3] == 1) {
+            }
+            else if (src[pos3] == 1){
                 src[pos3] = nbd;
             }
-
 
             CV_contour_push(res, x, y);
 
             s_prev = s;
 
-            x = CV_neighborhood[s][0];
-            y = CV_neighborhood[s][1];
+            x += CV_neighborhood[s][0];
+            y += CV_neighborhood[s][1];
 
-            if ( (pos4 == pos) && (pos3 == pos1)) break;
+            if ( (pos4 == pos) && (pos3 == pos1) ){
+                break;
+            }
 
             pos3 = pos4;
             s = (s + 4) & 7;
-
         }
-
     }
 
 }
 
-void CV_find_contours(CV_Image image_src, CV_Image *binary, CV_Contours *res) {
-
-    assert(image_src.width == binary->width && image_src.height == binary->height);
+void CV_find_contours(CV_Image image_src, int16_t *binary, CV_Contours *res) {
 
     size_t width = image_src.width;
     size_t height = image_src.height;
 
+    size_t max_size = width * height;
+
     CV_binary_border(image_src, binary);
 
-    int16_t deltas[CV_N_NEIGHBORHOODS];
+    int16_t deltas[CV_N_NEIGHBORHOODS * 2];
     CV_neighborhood_deltas(width + 2, deltas);
 
-    size_t pos = width + 3;
-    size_t nbd = 1;
-
-    uint32_t pix;
+    int pos, pix, nbd, i, j;
 
     uint8_t outer, hole;
-    size_t i, j;
 
     uint8_t *src = image_src.data;
 
+    pos = width + 3;
+    nbd = 1;
+
     for (i=0; i < height; ++i, pos += 2) {
         for (j=0; j < width; ++j, ++pos) {
-            pix = src[pos];
-
+            pix = binary[pos];
+            
             if (pix != 0) {
                 outer = hole = 0;
 
                 if (pix == 1 && src[pos - 1] == 0) {
                     outer = 1;
                 } else if (pix >= 1 && src[pos + 1] == 0) {
-                    hole = 0;
+                    hole = 1;
                 }
 
                 if (outer || hole) {
                     ++nbd;
 
-                    CV_border_following(image_src, pos, nbd, j, i, hole, deltas, res);
-                    res->n_contours++;
+                    CV_border_following(binary, pos, nbd, j, i, hole, deltas, res);
+                    CV_contour_append(res);
                     if (res->n_contours >= res->max_n_contours) return;
                 }
             }
@@ -838,35 +847,29 @@ size_t CV_count_nonzero(CV_Image image_src,
 
 }
 
-void CV_binary_border(CV_Image image_src, CV_Image *image_dst) {
+void CV_binary_border(CV_Image image_src, int16_t *dst) {
 
-    assert(image_src.width == image_dst->width && image_src.height == image_dst->height);
+    unsigned char *src = image_src.data;
+    int height = image_src.height, width = image_src.width,
+        posSrc = 0, posDst = 0, i, j;
 
-    uint8_t *src = image_src.data;
-    uint8_t *dst = image_dst->data;
-    size_t height = image_src.height;
-    size_t width = image_src.width;
-
-    size_t pos_dst = 0;
-    size_t pos_src = 0;
-    ssize_t i, j;
-
-    for (j = -2; j < width; ++j) {
-        dst[pos_dst++] = 0;
+    for (j = -2; j < width; ++ j){
+        dst[posDst ++] = 0;
     }
 
-    for (i = 0; i < height; ++i) {
-        dst[pos_dst++] = 0;
+    for (i = 0; i < height; ++ i){
+        dst[posDst ++] = 0;
 
-        for (j = 0; j < width; ++j) {
-            dst[pos_dst++] = (0 == src[pos_src++] ? 0 : 1);
+        for (j = 0; j < width; ++ j){
+            dst[posDst ++] = (0 == src[posSrc ++]? 0: 1);
         }
 
-        dst[pos_dst++] = 0;
+        dst[posDst ++] = 0;
     }
 
-    for (j = -2; j < width; ++j) {
-        dst[pos_dst++] = 0;
+    for (j = -2; j < width; ++ j){
+        dst[posDst ++] = 0;
     }
+
 
 }

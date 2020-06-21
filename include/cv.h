@@ -48,7 +48,7 @@ uint8_t CV_otsu(CV_Image src);
 void CV_stack_box_blur(CV_Image image_src, uint32_t radius);
 
 
-void CV_find_contours(CV_Image image_src, CV_Image *binary, CV_Contours *res);
+void CV_find_contours(CV_Image image_src, int16_t *binary, CV_Contours *res);
 
 void CV_approx_poly_dp(CV_Contours *contour, size_t contour_idx, float epsilon, CV_Contours *res);
 
@@ -60,4 +60,4 @@ float CV_perimeter(CV_Contours *contours, size_t contour_idx);
 size_t CV_count_nonzero(CV_Image image_src,
         size_t x, size_t y,
         size_t w, size_t h);
-void CV_binary_border(CV_Image image_src, CV_Image *image_dst);
+void CV_binary_border(CV_Image image_src, int16_t *binary);

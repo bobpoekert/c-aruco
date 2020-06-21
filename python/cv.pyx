@@ -27,7 +27,7 @@ cdef extern from "cv.h":
     uint8_t CV_otsu(CV_Image src)
     void CV_stack_box_blur(CV_Image image_src, uint32_t radius)
 
-    void CV_find_contours(CV_Image image_src, CV_Image *binary, CV_Contours *res)
+    void CV_find_contours(CV_Image image_src, int16_t *binary, CV_Contours *res)
 
     void CV_approx_poly_dp(CV_Contours *contour, size_t contour_idx, float epsilon, CV_Contours *res)
 
@@ -39,7 +39,7 @@ cdef extern from "cv.h":
     size_t CV_count_nonzero(CV_Image image_src,
             size_t x, size_t y,
             size_t w, size_t h)
-    void CV_binary_border(CV_Image image_src, CV_Image *image_dst)
+    void CV_binary_border(CV_Image image_src, int16_t *dst)
 
 cdef image_from_array(inp, CV_Image *outp):
     cdef np.ndarray[np.uint8_t, ndim=2, mode='c'] cinp = inp
@@ -92,24 +92,14 @@ def adaptive_threshold(py_inp, kernel_size, thresh):
 
     return res
 
-def otsu_inplace(np.ndarray[np.uint8_t, ndim=2, mode='c'] inp):
+def otsu(np.ndarray[np.uint8_t, ndim=2, mode='c'] inp):
 
     cdef CV_Image inp_image
     image_from_array(inp, &inp_image)
 
-    CV_otsu(inp_image)
-
-def otsu(inp):
-    res = inp.copy()
-    otsu_inplace(res)
-    return res
-
-cdef slice_image(CV_Image img, arr):
-    return arr[:img.width, :img.height]
+    return CV_otsu(inp_image)
 
 def _find_contours(np.ndarray[np.uint8_t, ndim=2, mode='c'] inp):
-    cdef CV_Image inp_image
-    image_from_array(inp, &inp_image)
 
     max_size = inp.shape[0] * inp.shape[1]
 
@@ -117,26 +107,30 @@ def _find_contours(np.ndarray[np.uint8_t, ndim=2, mode='c'] inp):
     cdef np.ndarray[np.uint_t, ndim=1, mode='c'] ys = np.zeros_like(xs)
     cdef np.ndarray[np.uint_t, ndim=1, mode='c'] offsets = np.zeros_like(xs)
 
+    cdef CV_Image inp_image
+    image_from_array(inp, &inp_image)
+
+    cdef np.ndarray[np.int16_t, ndim=1, mode='c'] binary_data = np.zeros(((inp.shape[0] + 2) * (inp.shape[1] + 2),), dtype=np.int16)
+
     cdef CV_Contours res
     res.contour_starts = <size_t *> &offsets[0]
     res.xs = <size_t *> &xs[0]
     res.ys = <size_t *> &ys[0]
     res.max_n_contours = max_size
     res.n_contours = 0
-    res.array_length = ys.shape[0]
+    res.array_length = max_size
 
-    cdef CV_Image binary_image
-    binary_image_data = np.zeros_like(inp)
-    image_from_array(binary_image_data, &binary_image)
+    CV_find_contours(inp_image, &binary_data[0], &res)
 
-    CV_find_contours(inp_image, &binary_image, &res)
+    if res.n_contours < 1:
+        return None
 
     idx_end = res.contour_starts[res.n_contours]
 
     return (
-            xs[:idx_end], ys[:idx_end],
-            offsets[:res.n_contours],
-            slice_image(binary_image, binary_image_data))
+            xs[:idx_end],
+            ys[:idx_end],
+            offsets[:res.n_contours])
 
 class Contours(object):
 
@@ -150,8 +144,14 @@ class Contours(object):
         return self.n_contours
 
     def __getitem__(self, idx):
-        start = self.starts[idx]
-        length = self.starts[idx + 1] - start
+        if idx == 0:
+            start = 0
+            length = self.starts[0]
+        else:
+            start = self.starts[idx - 1]
+            length = self.starts[idx] - start
+        start = int(start)
+        length = int(length)
         return (self.xs[start:(start + length)], self.ys[start:(start + length)])
 
     def __iter__(self):
@@ -160,12 +160,13 @@ class Contours(object):
 
     @classmethod
     def find(cls, image):
-        xs, ys, starts = _find_contours(image)
-        assert xs.shape == ys.shape
-        assert ys.shape == starts.shape
+        contours = _find_contours(image)
+        if contours is None:
+            return []
+        xs, ys, starts = contours
         return cls(xs, ys, starts, starts.shape[0])
 
-cdef init_single_contour(CV_Contours *contours, size_t *dummy_idx, 
+cdef init_single_contour(CV_Contours *contours, size_t *dummy_idx,
         np.ndarray[np.uint_t, ndim=1, mode='c'] xs,
         np.ndarray[np.uint_t, ndim=1, mode='c'] ys):
     contours.n_contours = 1
@@ -253,15 +254,14 @@ def count_nonzero(np.ndarray[np.uint8_t, ndim=2, mode='c'] inp,
     return CV_count_nonzero(inp_image, x, y, w, h)
 
 def binary_border(np.ndarray[np.uint8_t, ndim=2, mode='c'] inp):
-    cdef np.ndarray[np.uint8_t, ndim=2, mode='c'] res = np.zeros_like(inp)
+    cdef np.ndarray[np.int16_t, ndim=1, mode='c'] res =\
+        np.zeros(((inp.shape[0] + 2) * (inp.shape[1] + 2),), dtype=np.int16)
 
     cdef CV_Image inp_image
-    cdef CV_Image res_image
 
     image_from_array(inp, &inp_image)
-    image_from_array(res, &res_image)
 
-    CV_binary_border(inp_image, &res_image)
+    CV_binary_border(inp_image, &res[0])
 
     return res
 
