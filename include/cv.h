@@ -34,6 +34,7 @@ typedef struct CV_Contours {
     size_t *ys;
     size_t max_n_contours;
     size_t array_length;
+    size_t min_size;
 
 } CV_Contours;
 

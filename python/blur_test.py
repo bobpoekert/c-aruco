@@ -8,8 +8,7 @@ def blur_generator(inp):
     i = 2
     d = 2
     while 1:
-        blurred = au_cv.stack_box_blur(inp, i)
-        yield au_cv.threshold(blurred, au_cv.otsu(blurred))
+        yield au_cv.adaptive_threshold(inp, i, 128)
         i += d
         if i > 20 or i <= 2:
             d = -d

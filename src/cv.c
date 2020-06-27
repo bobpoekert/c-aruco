@@ -342,6 +342,7 @@ void CV_neighborhood_deltas(size_t width, int16_t res[]) {
 void CV_contour_push(CV_Contours *res, size_t x, size_t y) {
     assert(res->n_contours < res->max_n_contours);
     size_t contour_idx = res->contour_starts[res->n_contours];
+    assert(contour_idx < res->array_length);
     res->xs[contour_idx] = x;
     res->ys[contour_idx] = y;
     res->contour_starts[res->n_contours]++;
@@ -371,19 +372,20 @@ size_t CV_contours_length(CV_Contours *contour, size_t contour_idx) {
     }
 }
 
+#define CV_contour_full(v) (res->contour_starts[res->n_contours] >= res->array_length)
+
 void CV_border_following(
         int16_t *src,
         size_t pos, ssize_t nbd,
-        size_t x_start, size_t y_start,
+        size_t pointX, size_t pointY,
         uint8_t hole,
         int16_t deltas[], 
         CV_Contours *res) {
 
     int pos1, pos3, pos4;
     unsigned int s, s_end, s_prev;
-
-    size_t x = x_start;
-    size_t y = y_start;
+    size_t x = pointX;
+    size_t y = pointY;
 
     s = s_end = hole? 0: 4;
     do{
@@ -402,7 +404,7 @@ void CV_border_following(
         pos3 = pos;
         s_prev = s ^ 4;
 
-        while(1){
+        while(!CV_contour_full(res)){
             s_end = s;
 
             do{
@@ -459,6 +461,7 @@ void CV_find_contours(CV_Image image_src, int16_t *binary, CV_Contours *res) {
 
     for (i=0; i < height; ++i, pos += 2) {
         for (j=0; j < width; ++j, ++pos) {
+            if (CV_contour_full(res)) return;
             pix = binary[pos];
             
             if (pix != 0) {
@@ -472,9 +475,14 @@ void CV_find_contours(CV_Image image_src, int16_t *binary, CV_Contours *res) {
 
                 if (outer || hole) {
                     ++nbd;
-
+                    size_t prev_end = res->contour_starts[res->n_contours];
                     CV_border_following(binary, pos, nbd, j, i, hole, deltas, res);
-                    CV_contour_append(res);
+                    if (res->contour_starts[res->n_contours] - prev_end >= res->min_size) {
+                        CV_contour_append(res);
+                    } else {
+                        /* if contour is too short, rewind and write over it */
+                        res->contour_starts[res->n_contours] = prev_end;
+                    }
                     if (res->n_contours >= res->max_n_contours) return;
                 }
             }
@@ -725,8 +733,8 @@ void CV_warp(CV_Image image_src, CV_Image *image_dst, CV_Contours *contours, siz
             p3 = p4 = sy2 * width;
 
             dst[pos++] = 
-                (dy2 * (dx2 * src[p1 + sx1] + dx1 * src[p2 + sx2]) +
-                 dy1 * (dx2 * src[p3 + sx1] + dx1 * src[p4 + sx2])) & 0xff;
+                dy2 * (dx2 * src[p1 + sx1] + dx1 * src[p2 + sx2]) +
+                dy1 * (dx2 * src[p3 + sx1] + dx1 * src[p4 + sx2]);
 
         }
     }

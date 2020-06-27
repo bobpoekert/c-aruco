@@ -17,6 +17,7 @@ cdef extern from "cv.h":
         size_t *ys
         size_t max_n_contours
         size_t array_length
+        size_t min_size
 
     ctypedef size_t CV_PerspectiveTransform[8];
 
@@ -99,9 +100,9 @@ def otsu(np.ndarray[np.uint8_t, ndim=2, mode='c'] inp):
 
     return CV_otsu(inp_image)
 
-def _find_contours(np.ndarray[np.uint8_t, ndim=2, mode='c'] inp):
+def _find_contours(np.ndarray[np.uint8_t, ndim=2, mode='c'] inp, size_t min_size):
 
-    max_size = inp.shape[0] * inp.shape[1]
+    max_size = inp.shape[0] * inp.shape[1] * 10
 
     cdef np.ndarray[np.uint_t, ndim=1, mode='c'] xs = np.zeros((max_size,), dtype=c_size_t)
     cdef np.ndarray[np.uint_t, ndim=1, mode='c'] ys = np.zeros_like(xs)
@@ -110,7 +111,8 @@ def _find_contours(np.ndarray[np.uint8_t, ndim=2, mode='c'] inp):
     cdef CV_Image inp_image
     image_from_array(inp, &inp_image)
 
-    cdef np.ndarray[np.int16_t, ndim=1, mode='c'] binary_data = np.zeros(((inp.shape[0] + 2) * (inp.shape[1] + 2),), dtype=np.int16)
+    cdef np.ndarray[np.int16_t, ndim=1, mode='c'] binary_data = np.zeros(
+            ((inp.shape[0] + 2) * (inp.shape[1] + 2),), dtype=np.int16)
 
     cdef CV_Contours res
     res.contour_starts = <size_t *> &offsets[0]
@@ -118,6 +120,7 @@ def _find_contours(np.ndarray[np.uint8_t, ndim=2, mode='c'] inp):
     res.ys = <size_t *> &ys[0]
     res.max_n_contours = max_size
     res.n_contours = 0
+    res.min_size = min_size
     res.array_length = max_size
 
     CV_find_contours(inp_image, &binary_data[0], &res)
@@ -130,7 +133,7 @@ def _find_contours(np.ndarray[np.uint8_t, ndim=2, mode='c'] inp):
     return (
             xs[:idx_end],
             ys[:idx_end],
-            offsets[:res.n_contours])
+            offsets[:(res.n_contours - 1)])
 
 class Contours(object):
 
@@ -159,8 +162,8 @@ class Contours(object):
             yield self[i]
 
     @classmethod
-    def find(cls, image):
-        contours = _find_contours(image)
+    def find(cls, image, min_size):
+        contours = _find_contours(image, min_size)
         if contours is None:
             return []
         xs, ys, starts = contours
